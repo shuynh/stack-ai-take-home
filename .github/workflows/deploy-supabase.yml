@@ -1,0 +1,159 @@
+name: Deploy Supabase to Kubernetes
+
+on:
+  # Auto-deploy dev on pushes to dev branch
+  push:
+    branches:
+      - dev
+    paths:
+      - 'k8s/**'
+      - '.github/workflows/deploy-supabase.yml'
+
+  # Manual deploy for both dev and prod
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+      action:
+        description: 'Deployment action'
+        required: false
+        type: choice
+        default: upgrade
+        options:
+          - install
+          - upgrade
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: 'us-east-2'
+  HELM_VERSION: 'v3.13.0'
+
+jobs:
+  deploy-supabase:
+    name: Deploy Supabase
+    runs-on: ubuntu-latest
+    # Determine environment: manual input > branch-based
+    environment: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/dev' && 'dev') || 'prod' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Determine environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            ENV="${{ github.event.inputs.environment }}"
+          elif [ "${{ github.ref }}" == "refs/heads/dev" ]; then
+            ENV="dev"
+          else
+            ENV="prod"
+          fi
+          echo "environment=${ENV}" >> $GITHUB_OUTPUT
+          echo "Deploying to: ${ENV}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-K8s
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure kubectl
+        run: |
+          ENV=${{ steps.env.outputs.environment }}
+          CLUSTER_NAME="${ENV}-supabase-eks"
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name $CLUSTER_NAME
+
+      - name: Verify cluster connection
+        run: kubectl cluster-info
+
+      - name: Apply External Secrets configuration
+        run: |
+          ENV=${{ steps.env.outputs.environment }}
+
+          # Update secret store with correct region and environment
+          sed "s/us-east-1/${{ env.AWS_REGION }}/g" k8s/base/secret-store.yaml | \
+          sed "s/ENV/${ENV}/g" > /tmp/secret-store.yaml
+
+          kubectl apply -f /tmp/secret-store.yaml
+
+          # Apply external secrets
+          sed "s/ENV/${ENV}/g" k8s/base/external-secrets.yaml | \
+          kubectl apply -f -
+
+      - name: Wait for External Secrets sync
+        run: |
+          echo "Waiting for External Secrets to sync..."
+          sleep 30
+          kubectl get externalsecrets -n supabase
+          kubectl get secrets -n supabase
+
+      - name: Add Supabase Helm repository
+        run: |
+          helm repo add supabase https://supabase-community.github.io/supabase-kubernetes
+          helm repo update
+
+      - name: Deploy/Upgrade Supabase
+        run: |
+          ENV=${{ steps.env.outputs.environment }}
+          ACTION=${{ github.event.inputs.action || 'upgrade' }}
+
+          if [ "$ACTION" == "install" ]; then
+            HELM_CMD="install"
+          else
+            HELM_CMD="upgrade --install"
+          fi
+
+          helm $HELM_CMD supabase supabase/supabase \
+            --namespace supabase \
+            --create-namespace \
+            --values k8s/base/supabase-values.yaml \
+            --values k8s/overlays/${ENV}/supabase-values.yaml \
+            --timeout 15m \
+            --wait
+
+      - name: Get deployment status
+        run: |
+          echo "=== Pods Status ==="
+          kubectl get pods -n supabase
+
+          echo "=== Services ==="
+          kubectl get svc -n supabase
+
+          echo "=== Ingress ==="
+          kubectl get ingress -n supabase
+
+      - name: Run smoke tests
+        run: |
+          echo "=== Running Smoke Tests ==="
+
+          # Wait for pods to be ready
+          kubectl wait --for=condition=ready pod -l app=kong -n supabase --timeout=300s
+
+          # Get ingress URL
+          INGRESS_URL=$(kubectl get ingress -n supabase -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
+          echo "Ingress URL: $INGRESS_URL"
+
+          # Test health endpoint
+          echo "Testing health endpoint..."
+          kubectl run curl-test --image=curlimages/curl:latest --rm -i --restart=Never -- \
+            curl -f http://kong.supabase.svc.cluster.local:8000/health || true

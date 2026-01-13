@@ -1,0 +1,53 @@
+# Dev environment overrides for Supabase Helm chart
+
+studio:
+  replicas: 1
+  environment:
+    SUPABASE_PUBLIC_URL: "https://dev-supabase.stack-ai.com"
+
+  hpa:
+    enabled: false
+
+kong:
+  hpa:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 4
+
+auth:
+  replicas: 1
+  environment:
+    GOTRUE_SITE_URL: "https://dev-supabase.stack-ai.com"
+
+  hpa:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 4
+
+rest:
+  hpa:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 6
+
+realtime:
+  hpa:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 4
+
+storage:
+  hpa:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 4
+
+ingress:
+  annotations:
+    alb.ingress.kubernetes.io/tags: "Environment=dev,Project=supabase"
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-2:ACCOUNT_ID:certificate/DEV_CERT_ID"  # Update with actual dev cert ARN from locals.tf
+  hosts:
+    - host: "dev-supabase.stack-ai.com"
+      paths:
+        - path: /
+          pathType: Prefix

@@ -1,0 +1,209 @@
+# Base Helm values for Supabase
+# Reference: https://github.com/supabase-community/supabase-kubernetes
+#
+# Database and S3 configuration:
+# All connection details come from External Secrets (AWS SSM Parameter Store)
+# This allows for dynamic configuration without changing Helm values
+
+# Studio (Dashboard)
+studio:
+  image:
+    tag: "20231123-64e9f5e"
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  environment:
+    STUDIO_PG_META_URL: "http://meta:8080"
+    SUPABASE_URL: "http://kong:8000"
+    SUPABASE_PUBLIC_URL: ""  # Override per environment
+    SUPABASE_ANON_KEY: ""    # From external secret
+    SUPABASE_SERVICE_KEY: "" # From external secret
+
+  hpa:
+    enabled: false
+
+# Kong (API Gateway)
+kong:
+  image:
+    tag: "2.8.1"
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  environment:
+    SUPABASE_ANON_KEY: ""
+    SUPABASE_SERVICE_KEY: ""
+
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+# Auth (GoTrue)
+auth:
+  image:
+    tag: "v2.99.0"
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  environment:
+    GOTRUE_DB_DRIVER: "postgres"
+    GOTRUE_SITE_URL: ""  # Override per environment
+    GOTRUE_JWT_SECRET: ""
+    GOTRUE_JWT_EXP: "3600"
+    GOTRUE_JWT_DEFAULT_GROUP_NAME: "authenticated"
+
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+# REST (PostgREST)
+rest:
+  image:
+    tag: "v11.2.2"
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  environment:
+    PGRST_DB_SCHEMA: "public,storage,graphql_public"
+    PGRST_DB_ANON_ROLE: "anon"
+    PGRST_JWT_SECRET: ""
+
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 15
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+# Realtime
+realtime:
+  image:
+    tag: "v2.25.35"
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+  environment:
+    DB_SSL: "false"
+    JWT_SECRET: ""
+
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+# Storage
+storage:
+  image:
+    tag: "v0.43.11"
+
+  serviceAccount:
+    create: false
+    name: "supabase-storage"  # Use IRSA service account
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+  environment:
+    STORAGE_BACKEND: "s3"
+    AWS_DEFAULT_REGION: ""  # From External Secret: supabase-s3.region
+    AWS_S3_BUCKET: ""  # From External Secret: supabase-s3.bucket
+    STORAGE_S3_ENDPOINT: ""  # Leave empty for AWS S3
+
+  persistence:
+    enabled: false  # Using S3 instead
+
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+
+# Meta (pg-meta)
+meta:
+  image:
+    tag: "v0.68.0"
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Functions (Edge Functions - Optional)
+functions:
+  enabled: false
+
+# PostgreSQL (Disabled - using external RDS)
+postgresql:
+  enabled: false
+
+# Global Database Configuration (for external RDS)
+# All values are dynamically populated from External Secrets (SSM Parameter Store)
+db:
+  host: ""  # From External Secret: supabase-db.host
+  port: ""  # From External Secret: supabase-db.port
+  database: ""  # From External Secret: supabase-db.database
+  user: ""  # From External Secret: supabase-db.username
+  password: ""  # From External Secret: supabase-db.password
+
+# Analytics (Disabled for now)
+analytics:
+  enabled: false
+
+# Ingress
+ingress:
+  enabled: true
+  className: "alb"
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+
+  hosts:
+    - host: ""  # Override per environment
+      paths:
+        - path: /
+          pathType: Prefix

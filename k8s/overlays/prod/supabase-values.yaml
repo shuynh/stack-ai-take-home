@@ -1,0 +1,108 @@
+# Production environment overrides for Supabase Helm chart
+
+studio:
+  replicas: 2
+  environment:
+    SUPABASE_PUBLIC_URL: "https://supabase.stack-ai.com"
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+kong:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+
+  hpa:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 15
+
+auth:
+  replicas: 2
+  environment:
+    GOTRUE_SITE_URL: "https://supabase.stack-ai.com"
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  hpa:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 15
+
+rest:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+
+  hpa:
+    enabled: true
+    minReplicas: 4
+    maxReplicas: 20
+
+realtime:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+  hpa:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 15
+
+storage:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+  hpa:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+
+meta:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+ingress:
+  annotations:
+    alb.ingress.kubernetes.io/tags: "Environment=prod,Project=supabase"
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-2:ACCOUNT_ID:certificate/PROD_CERT_ID"  # Update with actual prod cert ARN from locals.tf
+    alb.ingress.kubernetes.io/wafv2-acl-arn: ""    # Optional: Add WAF ARN
+  hosts:
+    - host: "supabase.stack-ai.com"
+      paths:
+        - path: /
+          pathType: Prefix
